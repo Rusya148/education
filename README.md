@@ -1,0 +1,79 @@
+# Minion Bank 🍌
+
+Учебный Fullstack-проект (Go + React) для практики внедрения DevOps-инструментов: CI/CD, HashiCorp Vault, Kubernetes и собственного Docker Registry.
+
+## О проекте
+
+Проект состоит из двух основных частей и необходимой инфраструктуры:
+
+1. **Backend (Go + Gin)**: REST API сервис.
+   - Принимает запросы на `POST /apply`.
+   - Сохраняет данные заявки в PostgreSQL (таблица `card_requests` создается автоматически).
+   - Отправляет событие о новой заявке в Apache Kafka (топик `card-requests` создается автоматически).
+   - Реализует эндпоинты `GET /healthz` и `GET /ready` для будущих Liveness/Readiness проб в Kubernetes.
+2. **Frontend (React + Vite)**: SPA приложение.
+   - Лендинг в стиле миньонов с формой заявки.
+   - **Динамический ENV**: URL бэкенда (`API_URL`) не вшит в сборку жестко. Он подменяется bash-скриптом (`entrypoint.sh`) при старте Docker-контейнера Nginx. Это критически важно для деплоя одного и того же образа в разные окружения (dev/prod) в Kubernetes.
+3. **Инфраструктура (Docker)**: Postgres, Kafka, Zookeeper упакованы в `docker-compose.yml`. 
+
+## 12-Factor App и Секреты
+
+Архитектура проекта строго следует принципу **12-факторного приложения** в части конфигурации: **ни в коде Backend, ни во Frontend нет захардкоженных паролей, логинов или URL-ов баз данных**. 
+
+- **Откуда берутся секреты сейчас?**
+  При локальном запуске (через Docker Compose) все секреты (например, логин/пароль БД `DB_USER` и `DB_PASS`) прокидываются в контейнеры как переменные окружения (Environment Variables) напрямую из `docker-compose.yml` (или из `.env` файла, если ты его создашь).
+- **Откуда будут браться секреты потом (в K8s)?**
+  Когда ты дойдешь до настройки **HashiCorp Vault**, тебе не придется переписывать код приложения. Ты настроишь Kubernetes (с помощью Vault Injector или CSI драйвера) таким образом, чтобы он сам "ходил" в Vault, забирал оттуда секреты и просто подкладывал их в поды твоего приложения в виде тех же самых переменных окружения.
+
+## Структура репозитория
+
+```text
+minion-bank/
+├── backend/
+│   ├── internal/      # Модульная логика (config, db, kafka, handlers, models)
+│   ├── main.go        # Точка входа (чистый main)
+│   ├── go.mod         # Зависимости Go (v1.25.0)
+│   └── Dockerfile     # Docker-образ (golang:1.25-alpine)
+├── frontend/
+│   ├── src/           # Исходники UI (React)
+│   ├── public/env-config.js # Заглушка для инъекции переменных окружения во фронтенд
+│   ├── entrypoint.sh  # Скрипт, который прокидывает ENV в env-config.js при старте Nginx
+│   └── Dockerfile     # Dockerfile для фронтенда (multi-stage сборка + Nginx)
+├── docker-compose.yml # Описание всей инфраструктуры для локального запуска
+└── README.md          # Этот файл
+```
+
+## Инструкция по локальному запуску (Этап 1: Docker)
+
+Убедись, что на машине установлен Docker и Docker Compose.
+
+1. **Сборка и запуск всего проекта в фоне:**
+   ```bash
+   docker compose up --build -d
+   ```
+2. **Проверка работоспособности:**
+   - Открой в браузере: `http://localhost:3000` (Frontend).
+   - Заполни форму и нажми "Оформить".
+3. **Чтение логов:**
+   Чтобы убедиться, что всё работает "под капотом", почитай логи бэкенда:
+   ```bash
+   docker compose logs -f backend
+   ```
+   Ты должен увидеть успешное подключение к БД, создание топика Kafka и логи об успешном сохранении профиля (Application submitted successfully).
+4. **Остановка:**
+   ```bash
+   docker compose down
+   ```
+
+## Твой дальнейший Roadmap обучения (Для чего этот код)
+
+1. **GitLab CI/CD & Registry**: 
+   - Настрой собственный Docker Registry. 
+   - Напиши `.gitlab-ci.yml`, который при коммите будет собирать `backend/Dockerfile` и `frontend/Dockerfile`, тегировать их и пушить в твой Registry.
+2. **Kubernetes (K8s)**:
+   - Напиши манифесты `Deployment` (для app и ui), `Service` (ClusterIP для app и NodePort/Ingress для ui).
+   - Задеплой это в локальный кластер (minikube/k3s).
+   - Проверь, как Nginx пода фронтенда "подхватывает" адрес Service бэкенда через ENV.
+3. **HashiCorp Vault**:
+   - Разверни Vault внутри K8s.
+   - Спрячь доступы к БД в Vault и настрой Vault Injector, чтобы поды Backend получали пароли напрямую из секретницы.
