@@ -4,7 +4,7 @@
 **Стек:** Go, React, PostgreSQL, Kafka, Terraform, Ansible, GitLab CI, Kubernetes, Vault, Prometheus, Grafana, Loki.
 **Окружение:** Ubuntu, bash.
 
-Этот план разбит на 6 логических этапов (недель), двигаясь от базовой инфраструктуры до продвинутой наблюдаемости и безопасности.
+Этот план разбит на 8 логических этапов, двигаясь от базовой инфраструктуры до продвинутой автоматизации (Helm + GitOps) и наблюдаемости.
 
 ---
 
@@ -53,27 +53,72 @@
 
 **Что нужно изучить:**
 - Базовые объекты k8s: `Pod`, `Deployment`, `Service`, `Ingress`, `ConfigMap`, `Secret`.
-- Stateful приложения в k8s: `StatefulSet`, `PV`, `PVC`.
-- Работа с пакетным менеджером Helm.
+- Работа с пакетным менеджером Helm (например, для NGINX Ingress).
 
 **Что конкретно сделать в коде:**
 1. Разверни NGINX Ingress Controller для обработки входящего трафика внутрь кластера.
-2. Подними **PostgreSQL** и **Kafka** в K8s с помощью `Helm`. Запиши параметры в кастомные `values.yaml` (`kubernetes/values/postgres-values.yaml`, и т.д.).
-   ```fish
-   helm repo add bitnami https://charts.bitnami.com/bitnami
-   helm install postgres bitnami/postgresql -f kubernetes/values/postgres-values.yaml
-   ```
+2. Подними **PostgreSQL** и **Kafka** локально через `docker-compose.yml`, чтобы они работали надежно вне Kubernetes.
 3. Напиши манифесты для своих приложений:
-   - `kubernetes/backend/`: `deployment.yaml`, `service.yaml`, `ingress.yaml`.
+   - `kubernetes/backend/`: `deployment.yaml`, `service.yaml`, `ingress.yaml`. В переменных укажи IP-адрес хост-машины, чтобы под достучался к БД.
    - `kubernetes/frontend/`: `deployment.yaml`, `service.yaml`, `ingress.yaml` (или настрой Nginx Ingress отдавать статику).
 
 **Как проверить, что это работает:**
-- `kubectl get pods -A` покажет, что БД, Kafka и твои приложения запущены (`Running`).
+- `docker-compose ps` покажет, что БД и Kafka работают вне кубера.
+- `kubectl get pods -A` покажет, что твои приложения запущены в k8s (`Running`).
 - Пробрось порт: `kubectl port-forward svc/frontend-service 3000:80` (или настрой `/etc/hosts` для Ingress, например `127.0.0.1 minionbank.local` и зайди в браузер).
+
+**Кастомные манифесты:**
+На этом этапе мы написали "чистые" (сырые) манифесты Kubernetes. На следующем этапе мы превратим их в универсальные шаблоны (Helm), чтобы деплоить сразу в 2 окружения: **dev** и **prod**.
 
 ---
 
-## Неделя 3: CI/CD автоматизация (GitLab CI/CD)
+## Неделя 4: Шаблонизация с Helm (Dev и Prod окружения)
+
+**Что нужно изучить:**
+- Структура Helm-чарта (`Chart.yaml`, `templates/`, `values.yaml`).
+- Шаблонизация в Helm (переменные `{{ .Values... }}`, функции, `if/else`).
+- Зачем нужен Helm для своих собственных сервисов, а не только для сторонних (удобное управление версиями и конфигами для разных сред).
+
+**Что конкретно сделать в коде:**
+1. Создай свой собственный Helm-чарт для бэкенда (и потом для фронтенда):
+   ```bash
+   helm create minion-backend
+   ```
+2. Очисти директорию `templates/` от стандартного мусора и перенеси туда свои манифесты `deployment.yaml`, `service.yaml`, `ingress.yaml` с предыдущего этапа.
+3. Замени захардкоженные значения (имена образов, реплики, хосты Ingress) на переменные:
+   ```yaml
+   # Пример куска templates/deployment.yaml
+   image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+   replicas: {{ .Values.replicaCount }}
+   ```
+4. Создай два файла конфигурации: `values-dev.yaml` (например: 1 реплика, домен dev.minionbank.local) и `values-prod.yaml` (3 реплики, домен prod.minionbank.local).
+
+**Как проверить, что это работает:**
+- Сделай dry-run (проверку рендера) для dev: `helm template my-backend-dev ./minion-backend -f values-dev.yaml`.
+- Установи чарт в кластер в разные namespace (`dev` и `prod`).
+
+---
+
+## Неделя 5: GitOps и ArgoCD
+
+**Что нужно изучить:**
+- Парадигма GitOps: конфигурация инфраструктуры и приложений тоже хранится в Git, и *он* является единственным источником правды.
+- Архитектура ArgoCD: как ArgoCD постоянно сверяет состояние кластера (Live State) с манифестами в Git (Target State) и автоматически синхронизирует их.
+
+**Что конкретно сделать в коде:**
+1. Выдели отдельный репозиторий под инфраструктуру (`minion-bank-infra`), куда ты положишь свой Helm чарт и файлы `values-dev.yaml` / `values-prod.yaml`.
+2. Установи ArgoCD в свой k8s-кластер через официальные манифесты.
+3. Напиши объект `Application` для ArgoCD, в котором укажешь, что приложение `minion-backend-dev` должно брать код из Git-репозитория `minion-bank-infra` с файлом `values-dev.yaml` и разворачиваться в namespace `dev`.
+4. Сделай такой же `Application` для `prod`.
+
+**Как проверить, что это работает:**
+- Зайди в Web UI ArgoCD (через port-forward).
+- Поменяй версию образа в `values-dev.yaml` в репозитории `minion-bank-infra` и сделай push.
+- Убедись, что ArgoCD мгновенно увидел изменения (Out of Sync) и сам обновил поды бэкенда в кластере k8s! Без участия CI пайплайна самого сервиса.
+
+---
+
+## Неделя 6: Безопасное хранение секретов (HashiCorp Vault)
 
 **Что нужно изучить:**
 - Концепции GitLab CI: stages, pipelines, Docker-in-Docker / Kaniko (рекомендую Kaniko для безопасной сборки в k8s).
@@ -104,62 +149,30 @@ build_image:
   image:
     name: gcr.io/kaniko-project/executor:debug
     entrypoint: [""]
-  script:
-    - mkdir -p /kaniko/.docker
-    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
-    - /kaniko/executor --context $CI_PROJECT_DIR --dockerfile $CI_PROJECT_DIR/Dockerfile --destination $DOCKER_IMAGE
-
-deploy_k8s:
-  stage: deploy
-  image: bitnami/kubectl:latest
-  script:
-    # Требуется настройка kubeconfig через переменные CI/CD
-    - kubectl set image deployment/backend backend=$DOCKER_IMAGE
-    - kubectl rollout status deployment/backend
-```
-
-**Как проверить, что это работает:**
-- Сделай git push. В интерфейсе GitLab в разделе `CI/CD -> Pipelines` ползунок дойдет до зеленой галочки.
-- В GitLab `Container Registry` соберется Docker-образ твоего бэкенда.
-- В кластере автоматически пересоздадутся поды с новым образом (можно отследить через `k9s`).
-
 ---
 
-## Неделя 4: Безопасное хранение секретов (HashiCorp Vault)
+## Неделя 7: Умный CI/CD (GitLab CI/CD с выбором деплоя)
 
 **Что нужно изучить:**
-- Архитектура HashiCorp Vault.
-- Механизм авторизации k8s (Kubernetes Auth Method) в Vault.
-- Vault Agent Sidecar Injector (как автоматически прокидывать секреты в поды, чтобы приложение читало их как файл или переменные окружения, а разработчики не видели их в открытом виде).
+- Продвинутые концепции GitLab CI: переменные уровня pipeline, `rules`, `if`.
+- Автоматический коммит из одного репозитория (кода бэкенда) в другой (репозиторий инфраструктуры ArgoCD) с использованием Deploy Tokens или SSH ключей.
 
 **Что конкретно сделать в коде:**
-1. Разверни Vault в dev-режиме локально через Helm.
-2. Настрой Kubernetes Auth:
-   ```fish
-   vault auth enable kubernetes
-   vault write auth/kubernetes/config kubernetes_host="https://kubernetes.default.svc:443"
-   ```
-3. Создай секрет с кредами от PostgreSQL в Vault (`secret/data/backend-db`).
-4. Добавь аннотации в `kubernetes/backend/deployment.yaml`:
-   ```yaml
-   template:
-     metadata:
-       annotations:
-         vault.hashicorp.com/agent-inject: "true"
-         vault.hashicorp.com/role: "backend-role"
-         vault.hashicorp.com/agent-inject-secret-db-config: "secret/data/backend-db"
-   ```
-5. В Go-бэкенде настрой чтение файла `/vault/secrets/db-config` или парсинг переменных окружения, которые Vault сгенерирует.
+В репозитории Backend (и Frontend) создай умный `.gitlab-ci.yml`.
+У тебя должен быть выбор, как именно деплоить приложение по окончании сборки Docker-образа. Это решается через переменную CI/CD, например `DEPLOY_METHOD`.
+
+1. **Если `DEPLOY_METHOD == "helm"` (Традиционный Push-деплой):**
+   Пайплайн сам скачивает утилиту `helm`, настраивает `kubeconfig` и запускает `helm upgrade --install ...` напрямую в кластер k8s.
+2. **Если `DEPLOY_METHOD == "argocd"` (Современный GitOps Pull-деплой):**
+   Пайплайн **вообще не трогает k8s**. Вместо этого джоба клонирует infra-репозиторий, меняет тег образа (например через `sed` или `yq`) в файле `values-dev.yaml`, делает `git commit` и `git push`. Дальше за дело берется ArgoCD, как мы настроили на Неделе 5.
 
 **Как проверить, что это работает:**
-- Удали хардкод или обычный k8s Secret с паролем от БД. `kubectl delete secret db-pass`.
-- Рестартни под бэкенда. Сделай `kubectl exec -it <backend-pod_name> -c backend -- fish` (или sh).
-- Проверь что файл есть: `cat /vault/secrets/db-config`.
-- По логам Backend-а убедись, что он успешно подключился к PostgreSQL.
+- Запусти пайплайн ручками с флагом `DEPLOY_METHOD=helm`. В логах посмотришь, как отработал helm.
+- Запусти с флагом `DEPLOY_METHOD=argocd`. Посмотри, что в инфра-репу прилетел коммит от бота, и ArgoCD начал раскатку.
 
 ---
 
-## Неделя 5: Инструментирование и Метрики (Prometheus & Grafana)
+## Неделя 8: Инструментирование и Метрики (Prometheus & Grafana)
 
 **Что нужно изучить:**
 - Библиотека `prometheus/client_golang` для Go.
@@ -183,7 +196,7 @@ deploy_k8s:
 
 ---
 
-## Неделя 6: Централизованное логирование (Loki / ELK)
+## Неделя 9: Централизованное логирование (Loki / ELK)
 
 **Что нужно изучить:**
 - PLG стек (Promtail, Loki, Grafana) — гораздо легковеснее для локалки чем ELK.

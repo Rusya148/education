@@ -51,8 +51,8 @@ vault write auth/kubernetes/config \
 Оставаясь внутри пода `vault-0`, добавим пароль от нашей БД PostgreSQL в хранилище Vault:
 
 ```bash
-# Кладем JSON по пути secret/minion-bank/database
-vault kv put secret/minion-bank/database password="supersecretdb_pass" username="minion_user" host="postgres-postgresql.default.svc.cluster.local" dbname="minion_bank"
+# Кладем JSON по пути secret/minion-bank/database (замени 192.168.1.X на IP своей хост-машины, где крутится docker-compose)
+vault kv put secret/minion-bank/database password="supersecretdb_pass" username="minion_user" host="192.168.1.X" dbname="minion_bank"
 ```
 
 Создадим так называемую Политику (Policy), которая разрешает чтение только этого секрета:
@@ -162,7 +162,7 @@ kubectl apply -f kubernetes/backend-deployment.yaml
    ```
    Если ты видишь там:
    ```text
-   DB_HOST=postgres-postgresql.default.svc.cluster.local
+   DB_HOST=192.168.1.X
    DB_USER=minion_user
    DB_PASSWORD=supersecretdb_pass
    DB_NAME=minion_bank

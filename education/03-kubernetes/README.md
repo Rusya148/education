@@ -13,7 +13,7 @@ Kubernetes — это система оркестрации контейнеро
 3. **Service:** Поскольку поды смертны и их IP-адреса постоянно меняются, *Service* дает стабильный внутренний IP и DNS-имя (например, `backend-svc`) для балансировки трафика на эти поды внутри кластера.
 4. **Ingress / Ingress Controller:** Точка входа в кластер из внешнего мира (интернета). Это "умный" Nginx/HAProxy, который маршрутизирует трафик по URL и доменам (например: запрос на `api.minionbank.local` направить в сервис бэкенда, а `/` — во фронтенд).
 5. **ConfigMap & Secret:** Хранилища конфигурационных файлов и секретов. Приложение может примонтировать их как файлы или получить в виде переменных окружения.
-6. **StatefulSet & PV/PVC:** Объекты для stateful-приложений (базы данных, Kafka). В отличие от Deployment, здесь у каждого пода стабильное имя и привязанный кусочек диска (Volume), который не удаляется при рестарте пода.
+6. **StatefulSet & PV/PVC:** Объекты для stateful-приложений, хотя в рамках этого туториала мы вынесем сложные базы данных из Kubernetes в отдельный `docker-compose`.
 
 ### Что такое Helm?
 Helm — это пакетный менеджер (как `apt` для Ubuntu). Он шаблонизирует манифесты k8s, чтобы можно было установить сложную базу данных вроде PostgreSQL одной командой, просто указав нужный пароль в файле `values.yaml`. 
@@ -37,34 +37,37 @@ kubectl wait --namespace ingress-nginx \
   --timeout=90s
 ```
 
-### 2.2 Развертывание PostgreSQL и Kafka через Helm
-Мы не будем писать манифесты для БД и Кафки с нуля, а возьмем проверенные Helm Charts от Bitnami.
-Добавь репозиторий Bitnami:
-```bash
-helm repo add bitnami https://charts.bitnami.com/bitnami
-helm repo update
-```
+### 2.2 Развертывание PostgreSQL и Kafka (вне Kubernetes)
+Так как базы данных и брокеры сообщений сложны в управлении внутри K8s для новичков, мы вынесем их наружу в обычный `docker-compose.yml` в корне проекта на хост-машине:
 
-Создай файл `kubernetes/postgres-values.yaml`:
 ```yaml
-global:
-  postgresql:
-    auth:
-      username: "minion_user"
-      password: "secretpassword"
-      database: "minion_bank"
-primary:
-  persistence:
-    size: 2Gi # Для локалки хватит
-```
-Установи БД в кластер:
-```bash
-helm install postgres bitnami/postgresql -f kubernetes/postgres-values.yaml
+version: '3.8'
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: minion_user
+      POSTGRES_PASSWORD: secretpassword
+      POSTGRES_DB: minion_bank
+    ports:
+      - "5432:5432"
+
+  kafka:
+    image: bitnami/kafka:latest
+    environment:
+      KAFKA_CFG_NODE_ID: 1
+      KAFKA_CFG_PROCESS_ROLES: broker,controller
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+    ports:
+      - "9092:9092"
 ```
 
-Для установки Kafka (аналогично создай `kubernetes/kafka-values.yaml` или используй дефолты):
+Запусти их на своей Ubuntu:
 ```bash
-helm install my-kafka bitnami/kafka
+docker-compose up -d
 ```
 
 ### 2.3 Написание манифестов для Backend (Go)
@@ -98,7 +101,9 @@ spec:
         env:
         # Пока что мы передаем креды так. На следующем этапе (Vault) мы это удалим!
         - name: DB_HOST
-          value: "postgres-postgresql.default.svc.cluster.local"
+          # Замени на IP-адрес своей Ubuntu машины в локальной сети, например 192.168.1.10. 
+          # Если использовать Docker Desktop, можно писать host.docker.internal, но для linux используй публичный IP шлюза докера или локальной сети.
+          value: "192.168.1.X"
         - name: DB_USER
           value: "minion_user"
         - name: DB_PASSWORD
@@ -164,7 +169,7 @@ kubectl apply -f kubernetes/ingress.yaml
    kubectl get svc
    kubectl get ingress
    ```
-   Ты должен увидеть поды PostgreSQL, Kafka и свои 2 пода Backend-а, которые должны быть в статусе `Running`.
+   Ты должен увидеть поды своих приложений, которые должны быть в статусе `Running`. БД и Kafka живут вне кластера, поэтому здесь их не будет.
    
 2. **Проверь логи твоего сервиса:**
    Найди точное имя пода через команду выше и глянь логи:
