@@ -65,15 +65,3 @@ minion-bank/
    docker compose down
    ```
 
-## Твой дальнейший Roadmap обучения (Для чего этот код)
-
-1. **GitLab CI/CD & Registry**: 
-   - Настрой собственный Docker Registry. 
-   - Напиши `.gitlab-ci.yml`, который при коммите будет собирать `backend/Dockerfile` и `frontend/Dockerfile`, тегировать их и пушить в твой Registry.
-2. **Kubernetes (K8s)**:
-   - Напиши манифесты `Deployment` (для app и ui), `Service` (ClusterIP для app и NodePort/Ingress для ui).
-   - Задеплой это в локальный кластер (minikube/k3s).
-   - Проверь, как Nginx пода фронтенда "подхватывает" адрес Service бэкенда через ENV.
-3. **HashiCorp Vault**:
-   - Разверни Vault внутри K8s.
-   - Спрячь доступы к БД в Vault и настрой Vault Injector, чтобы поды Backend получали пароли напрямую из секретницы.
