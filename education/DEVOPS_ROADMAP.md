@@ -2,7 +2,7 @@
 
 **Роль:** Senior DevOps Engineer / Инфраструктурный архитектор
 **Стек:** Go, React, PostgreSQL, Kafka, Terraform, Ansible, GitLab CI, Kubernetes, Vault, Prometheus, Grafana, Loki.
-**Окружение:** Arch Linux, fish shell, i3 wm.
+**Окружение:** Ubuntu, bash.
 
 Этот план разбит на 6 логических этапов (недель), двигаясь от базовой инфраструктуры до продвинутой наблюдаемости и безопасности.
 
@@ -13,14 +13,14 @@
 **Что нужно изучить:**
 - Основы Terraform (состояния, провайдеры, модули).
 - Использование локальных k8s-кластеров через `kind` (Kubernetes in Docker) или `k3d`.
-- Базовый Ansible (в контексте первоначальной подготовки ОС, если когда-то будешь деплоить на "голое железо" / VPS, хотя для локалки на Arch Linux нам достаточно поставить пакеты).
+- Базовый Ansible (в контексте первоначальной подготовки ОС, так как мы будем деплоить на Ubuntu).
 
 **Что конкретно сделать в коде:**
-1. **Подготовка Arch Linux:**
-   Установи необходимые зависимости через твой привычный пакетный менеджер из под `fish`:
-   ```fish
-   sudo pacman -S docker terraform ansible kubectl helm k9s
-   yay -S kind # или k3d-bin
+1. **Подготовка Ubuntu:**
+   В будущем мы автоматизируем это через Ansible плейбук, но для начала установи нужные пакеты:
+   ```bash
+   sudo apt update && sudo apt install -y docker.io ansible
+   # Остальные утилиты (terraform, kubectl, helm, kind) мы установим через Ansible чуть позже
    ```
    *Не забудь добавить юзера в группу docker:* `sudo usermod -aG docker $USER` (и перезайди).
 
@@ -186,7 +186,7 @@ deploy_k8s:
 ## Неделя 6: Централизованное логирование (Loki / ELK)
 
 **Что нужно изучить:**
-- PLG стек (Promtail, Loki, Grafana) — гораздо легковеснее для Arch Linux/локалки чем ELK.
+- PLG стек (Promtail, Loki, Grafana) — гораздо легковеснее для локалки чем ELK.
 - Structured logging в Go (библиотека `slog` из stdlib или `zap`).
 
 **Что конкретно сделать в коде:**
